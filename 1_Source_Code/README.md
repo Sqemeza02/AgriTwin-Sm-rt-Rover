@@ -1,267 +1,147 @@
-#define BLYNK_TEMPLATE_ID "TMPL2-NeRMNUC"
-#define BLYNK_TEMPLATE_NAME "AgriTwin Smart Rover"
-#define BLYNK_AUTH_TOKEN "qExa8cVaUL14jy44WfIM-qvQ9SoN_HNO"
-
-#include <WiFiS3.h>
-#include <BlynkSimpleWifiS3.h>
-#include <Wire.h>
+#define BLYNK_TEMPLATE_ID "TMPL2u1GnPFi5"
+#define BLYNK_TEMPLATE_NAME "agriTwin Smart rover"
+#define BLYNK_AUTH_TOKEN "n2bslE5w45hQkLExSEit6ji6yDq1w5k1"
+#include <ESP8266WiFi.h>
+#include <BlynkSimpleEsp8266.h>
 #include <DHT.h>
+#include <Wire.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
 
-// --- Network Credentials ---
-char ssid[] = "Pamela";
-char pass[] = "Khayalethu0317";
-
-// --- Hardware Pin Allocations ---
-#define DHT_PIN 2         // DHT11 Data Pin
-#define DHTTYPE DHT11
-
-#define TRIG_PIN 3        // Ultrasonic Sensor Trigger Pin
-#define ECHO_PIN 4        // Ultrasonic Sensor Echo Pin
-
-// L298N Channel A & B: 4WD Motors (Left & Right Sides)
-#define ENA 5             // Left Motors Speed (PWM)
-#define IN1 6             // Left Motors Direction 1
-#define IN2 7             // Left Motors Direction 2
-
-#define IN3 9             // Right Motors Direction 1
-#define IN4 10            // Right Motors Direction 2
-#define ENB 11            // Right Motors Speed (PWM)
-
-// 5V Relay Pin for Water Pump
-#define RELAY_PIN 8       // Relay Signal Pin (IN / SIG)
-
-#define SOIL_PIN A0       // Analog Soil Moisture Sensor Pin
-#define GREEN_LED A1      // Green LED (Optimal Soil Indicator)
-#define RED_LED 13        // Red LED (Dry Soil Warning Indicator)
-
-// Configuration Thresholds
-const int SOIL_DRY_THRESHOLD = 30; // Soil moisture trigger level (%)
-const int OBSTACLE_LIMIT_CM = 15;   // Obstacle limit distance (cm)
-int driveSpeed = 200;               // Speed controlled via Blynk Virtual Pin
-
-// System Mode Variable (0 = Manual Control, 1 = Auto Patrol)
-int autoMode = 0;
-
-// OLED Setup (128x64 I2C)
-Adafruit_SSD1306 display(128, 64, &Wire, -1);
-
-// Sensor & Timer Initialization
-DHT dht(DHT_PIN, DHTTYPE);
+// ==== WiFi & Blynk ====
+char ssid[] = "Samsung Galaxy A03";
+char pass[] = "@Spondo12!";
 BlynkTimer timer;
 
-void setup() {
-  Serial.begin(9600);
+// ==== Pin Definitions ====
+#define DHTPIN 2       // D4 on NodeMCU
+#define DHTTYPE DHT11
+#define MOISTURE_PIN A0
+#define SCREEN_WIDTH 128
+#define SCREEN_HEIGHT 64
+#define OLED_RESET -1
+#define OLED_ADDR 0x3C
+#define OLED_SDA 4     // D2 on NodeMCU
+#define OLED_SCL 5     // D1 on NodeMCU
 
-  // Pin Setup
-  pinMode(RED_LED, OUTPUT);
-  pinMode(GREEN_LED, OUTPUT);
-  pinMode(TRIG_PIN, OUTPUT);
-  pinMode(ECHO_PIN, INPUT);
+// ==== Objects ====
+DHT dht(DHTPIN, DHTTYPE);
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 
-  pinMode(ENA, OUTPUT);
-  pinMode(IN1, OUTPUT);
-  pinMode(IN2, OUTPUT);
-  pinMode(IN3, OUTPUT);
-  pinMode(IN4, OUTPUT);
-  pinMode(ENB, OUTPUT);
+float temperature = 0;
+float humidity = 0;
+int moistureRaw = 0;
+int moisturePercent = 0;
 
-  // Relay Control Pin Setup
-  pinMode(RELAY_PIN, OUTPUT);
+unsigned long previousMillis = 0;
+const long interval = 2000; // Update every 2 seconds
 
-  dht.begin();
-
-  // OLED Setup
-  if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
-    Serial.println(F("OLED Allocation Failed"));
+// BLYNK SEND FUNCTION - runs every 2s
+void sendToBlynk() {
+  Blynk.virtualWrite(V0, temperature);      // V0 = Temperature
+  Blynk.virtualWrite(V1, humidity);         // V1 = Humidity  
+  Blynk.virtualWrite(V2, moisturePercent);  // V2 = Soil %
+  
+  // Optional: Send alert if soil is dry
+  if(moisturePercent < 30) {
+    Blynk.logEvent("soil_dry", "Soil is too dry! Please water plants.");
   }
-  display.clearDisplay();
-  display.setTextColor(SSD1306_WHITE);
-  display.setTextSize(1);
-  display.setCursor(0, 0);
-  display.println(F("AgriTwin R4 WiFi..."));
-  display.display();
+}
 
-  stopRover();
-  stopPump();
-
-  // Connect to Blynk
+void setup() {
+  Serial.begin(115200);
+  
+  // 1. I2C for OLED
+  Wire.begin(OLED_SDA, OLED_SCL); 
+  Wire.setClock(100000);
+  
+  // 2. Init OLED
+  if(!display.begin(SSD1306_SWITCHCAPVCC, OLED_ADDR)) {
+    Serial.println("SSD1306 allocation failed");
+    for(;;);
+  }
+  display.ssd1306_command(SSD1306_SETCONTRAST);
+  display.ssd1306_command(255);
+  
+  // 3. Init DHT
+  dht.begin();
+  
+  // 4. Connect Blynk
   Blynk.begin(BLYNK_AUTH_TOKEN, ssid, pass);
-
-  // Setup timed loop for telemetry updates every 1 second
-  timer.setInterval(1000L, sendTelemetryData);
+  timer.setInterval(2000L, sendToBlynk); // Send data every 2 seconds
+  
+  // Splash screen
+  display.clearDisplay();
+  display.setTextSize(1);
+  display.setTextColor(SSD1306_WHITE);
+  display.setCursor(20,20);
+  display.println("Smart Farm");
+  display.setCursor(15,35);
+  display.println("Connecting Blynk..");
+  display.display();
+  delay(2000);
 }
 
 void loop() {
-  Blynk.run();
-  timer.run();
-
-  // If set to Autonomous Patrol Mode, execute auto navigation and irrigation
-  if (autoMode == 1) {
-    runAutonomousLogic();
+  Blynk.run();   // Must have
+  timer.run();   // Must have
+  
+  unsigned long currentMillis = millis();
+  
+  if (currentMillis - previousMillis >= interval) {
+    previousMillis = currentMillis;
+    readSensors();
+    updateDisplay();
   }
 }
 
-// --- Blynk Input Handler Virtual Pins ---
+void readSensors() {
+  // Read DHT11
+  humidity = dht.readHumidity();
+  temperature = dht.readTemperature(); // Celsius
+  
+  // Read Moisture
+  moistureRaw = analogRead(MOISTURE_PIN);
+  moisturePercent = map(moistureRaw, 1023, 300, 0, 100); // Calibrate 300=wet, 1023=dry
+  moisturePercent = constrain(moisturePercent, 0, 100);
 
-BLYNK_WRITE(V0) { // Joystick/Button: Forward
-  if (param.asInt() && autoMode == 0) moveForward(driveSpeed);
-  else if (autoMode == 0) stopRover();
-}
-
-BLYNK_WRITE(V1) { // Joystick/Button: Backward
-  if (param.asInt() && autoMode == 0) moveReverse(driveSpeed);
-  else if (autoMode == 0) stopRover();
-}
-
-BLYNK_WRITE(V2) { // Button: Turn Right
-  if (param.asInt() && autoMode == 0) turnRightAngle(90, driveSpeed);
-  else if (autoMode == 0) stopRover();
-}
-
-BLYNK_WRITE(V3) { // Switch: Water Pump Relay Toggle
-  if (param.asInt() && autoMode == 0) startPump();
-  else if (autoMode == 0) stopPump();
-}
-
-BLYNK_WRITE(V4) { // Switch: Mode Toggle (0 = Manual, 1 = Auto Patrol)
-  autoMode = param.asInt();
-  if (autoMode == 0) {
-    stopRover();
-    stopPump();
+  if (isnan(humidity) || isnan(temperature)) {
+    Serial.println("Failed to read from DHT sensor!");
   }
 }
 
-BLYNK_WRITE(V5) { // Slider: Speed Adjustment (0-255)
-  driveSpeed = param.asInt();
-}
-
-// --- Telemetry Dispatch to Blynk & OLED ---
-
-void sendTelemetryData() {
-  int rawSoil = analogRead(SOIL_PIN);
-  int soilMoisture = map(rawSoil, 0, 876, 0, 100);
-  soilMoisture = constrain(soilMoisture, 0, 100);
-
-  float tempC = dht.readTemperature();
-  float humidity = dht.readHumidity();
-  long distanceCm = readDistance();
-
-  // Push updates to Blynk App Dashboards
-  Blynk.virtualWrite(V10, soilMoisture);
-  Blynk.virtualWrite(V11, tempC);
-  Blynk.virtualWrite(V12, humidity);
-  Blynk.virtualWrite(V13, distanceCm);
-
-  // Update Status LEDs
-  if (soilMoisture < SOIL_DRY_THRESHOLD) {
-    digitalWrite(RED_LED, HIGH);
-    digitalWrite(GREEN_LED, LOW);
-  } else {
-    digitalWrite(GREEN_LED, HIGH);
-    digitalWrite(RED_LED, LOW);
-  }
-
-  // Refresh OLED Display
+void updateDisplay() {
   display.clearDisplay();
-  display.setCursor(0, 0);
-  display.println(F("=== AGRITWIN R4 WIFi ==="));
-  display.println();
-  display.print(F("Soil: ")); display.print(soilMoisture); display.println(F("%"));
-  display.print(F("Temp: ")); display.print(tempC, 1); display.println(F("C"));
-  display.print(F("Dist: ")); display.print(distanceCm); display.println(F("cm"));
-  display.print(F("Mode: ")); display.println(autoMode == 1 ? F("AUTO") : F("MANUAL"));
+  display.setTextSize(1);
+  display.setTextColor(SSD1306_WHITE);
+  
+  // Header + WiFi status
+  display.setCursor(0,0);
+  display.print("Smart Farm ");
+  if(Blynk.connected()) display.println("[ONLINE]");
+  else display.println("[OFFLINE]");
+  display.drawLine(0,10,128,10,SSD1306_WHITE);
+  
+  // Data
+  display.setCursor(0,15);
+  display.print("Temp: "); display.print(temperature, 1); display.println(" C");
+  
+  display.setCursor(0,28);
+  display.print("Humidity: "); display.print(humidity, 1); display.println(" %");
+  
+  display.setCursor(0,41);
+  display.print("Soil: "); display.print(moisturePercent); display.println(" %");
+  
+  // Moisture bar
+  display.drawRect(0, 55, 100, 8, SSD1306_WHITE);
+  display.fillRect(2, 57, moisturePercent, 4, SSD1306_WHITE);
+  display.setCursor(105, 53); display.print(moisturePercent); display.print("%");
+  
   display.display();
-}
-
-// --- Autonomous Mode Logic ---
-
-void runAutonomousLogic() {
-  int rawSoil = analogRead(SOIL_PIN);
-  int soilMoisture = map(rawSoil, 0, 876, 0, 100);
-  soilMoisture = constrain(soilMoisture, 0, 100);
-  long distanceCm = readDistance();
-
-  if (soilMoisture < SOIL_DRY_THRESHOLD) {
-    stopRover();
-    startPump();
-  } else {
-    stopPump();
-    if (distanceCm > 0 && distanceCm < OBSTACLE_LIMIT_CM) {
-      stopRover();
-      delay(300);
-      moveReverse(driveSpeed);
-      delay(500);
-      turnRightAngle(90, driveSpeed);
-    } else {
-      moveForward(driveSpeed);
-    }
-  }
-}
-
-// --- Relay Control Functions ---
-
-void startPump() {
-  // Turn Relay ON (Active HIGH modules)
-  // Note: If using an Active LOW relay, change HIGH to LOW
-  digitalWrite(RELAY_PIN, HIGH);
-}
-
-void stopPump() {
-  // Turn Relay OFF
-  // Note: If using an Active LOW relay, change LOW to HIGH
-  digitalWrite(RELAY_PIN, LOW);
-}
-
-// --- Motor & Sensor Helper Functions ---
-
-long readDistance() {
-  digitalWrite(TRIG_PIN, LOW);
-  delayMicroseconds(2);
-  digitalWrite(TRIG_PIN, HIGH);
-  delayMicroseconds(10);
-  digitalWrite(TRIG_PIN, LOW);
-  long duration = pulseIn(ECHO_PIN, HIGH, 25000);
-  if (duration == 0) return 999;
-  return (duration * 0.034 / 2);
-}
-
-void moveForward(int speed) {
-  digitalWrite(IN1, HIGH);
-  digitalWrite(IN2, LOW);
-  digitalWrite(IN3, HIGH);
-  digitalWrite(IN4, LOW);
-  analogWrite(ENA, speed);
-  analogWrite(ENB, speed);
-}
-
-void moveReverse(int speed) {
-  digitalWrite(IN1, LOW);
-  digitalWrite(IN2, HIGH);
-  digitalWrite(IN3, LOW);
-  digitalWrite(IN4, HIGH);
-  analogWrite(ENA, speed);
-  analogWrite(ENB, speed);
-}
-
-void turnRightAngle(int angle, int speed) {
-  digitalWrite(IN1, HIGH);
-  digitalWrite(IN2, LOW);
-  digitalWrite(IN3, LOW);
-  digitalWrite(IN4, HIGH);
-  analogWrite(ENA, speed);
-  analogWrite(ENB, speed);
-  delay(angle == 45 ? 350 : 700);
-}
-
-void stopRover() {
-  digitalWrite(IN1, LOW);
-  digitalWrite(IN2, LOW);
-  digitalWrite(IN3, LOW);
-  digitalWrite(IN4, LOW);
-  analogWrite(ENA, 0);
-  analogWrite(ENB, 0);
+  delay(50);
+  
+  // Debug to Serial
+  Serial.printf("Temp: %.1fC, Hum: %.1f%%, Soil: %d%%\n", temperature, humidity, moisturePercent);
 }
 <img width="971" height="483" alt="image" src="https://github.com/user-attachments/assets/e8246ee3-16ff-4e52-be2b-500dbd3ef58a" />
 
